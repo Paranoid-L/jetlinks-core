@@ -1,5 +1,7 @@
 package org.jetlinks.core.server.session;
 
+import lombok.AccessLevel;
+import lombok.Setter;
 import org.jetlinks.core.device.DeviceOperator;
 import org.jetlinks.core.enums.ErrorCode;
 import org.jetlinks.core.exception.DeviceOperationException;
@@ -12,10 +14,11 @@ import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.Optional;
 
-public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSession {
+public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSession, PersistentSession {
 
     DeviceSession parent;
 
+    @Setter(AccessLevel.PACKAGE)
     private long lastKeepAliveTime = System.currentTimeMillis();
 
     private final long connectTime = System.currentTimeMillis();
@@ -55,12 +58,13 @@ public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSessio
 
     @Override
     public Mono<Boolean> send(EncodedMessage encodedMessage) {
-        return Mono.defer(() -> {
-            if (parent.isAlive()) {
-                return parent.send(encodedMessage);
-            }
-            return Mono.error(new DeviceOperationException(ErrorCode.CLIENT_OFFLINE));
-        });
+        return Mono
+                .defer(() -> {
+                    if (parent.isAlive()) {
+                        return parent.send(encodedMessage);
+                    }
+                    return Mono.error(new DeviceOperationException(ErrorCode.CONNECTION_LOST));
+                });
     }
 
     @Override
@@ -108,6 +112,11 @@ public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSessio
     }
 
     @Override
+    public Duration getKeepAliveTimeout() {
+        return Duration.ofMillis(keepAliveTimeOutMs);
+    }
+
+    @Override
     public boolean isWrapFrom(Class<?> type) {
         return type == KeepOnlineSession.class || parent.isWrapFrom(type);
     }
@@ -121,4 +130,10 @@ public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSessio
     public void replaceWith(DeviceSession session) {
         this.parent = session;
     }
+
+    @Override
+    public String getProvider() {
+        return KeepOnlineDeviceSessionProvider.ID;
+    }
+
 }

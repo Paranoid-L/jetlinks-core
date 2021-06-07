@@ -80,6 +80,9 @@ public class CompositeProtocolSupport implements ProtocolSupport {
     private Function<DeviceProductOperator, Mono<Void>> onProductUnRegister;
     private Function<DeviceProductOperator, Mono<Void>> onProductMetadataChanged;
 
+    private BiFunction<DeviceOperator, Flux<DeviceOperator>, Mono<Void>> onChildBind;
+    private BiFunction<DeviceOperator, Flux<DeviceOperator>, Mono<Void>> onChildUnbind;
+
     private Map<String, BiFunction<ClientConnection, DeviceGatewayContext, Mono<Void>>> connectionHandlers = new ConcurrentHashMap<>();
 
     private Map<String, Flux<Feature>> features = new ConcurrentHashMap<>();
@@ -294,6 +297,21 @@ public class CompositeProtocolSupport implements ProtocolSupport {
         return this;
     }
 
+    /**
+     * 监听客户端连接,只有部分协议支持此操作,如:
+     * <pre>
+     *     support.doOnClientConnect((connection,context)->{
+     *       //客户端创建连接时,发送消息给客户端
+     *       return connection
+     *       .sendMessage(createHelloMessage())
+     *       .then();
+     *     })
+     * </pre>
+     *
+     * @param transport 通信协议,如: {@link org.jetlinks.core.message.codec.DefaultTransport#TCP}
+     * @param handler   处理器
+     * @since 1.1.6
+     */
     public void doOnClientConnect(Transport transport,
                                   BiFunction<ClientConnection, DeviceGatewayContext, Mono<Void>> handler) {
         connectionHandlers.put(transport.getId(), handler);
@@ -329,6 +347,14 @@ public class CompositeProtocolSupport implements ProtocolSupport {
         return onProductMetadataChanged != null ? onProductMetadataChanged.apply(operator) : Mono.empty();
     }
 
+    public void doOnChildBind(BiFunction<DeviceOperator, Flux<DeviceOperator>, Mono<Void>> onChildBind) {
+        this.onChildBind = onChildBind;
+    }
+
+    public void doOnChildUnbind(BiFunction<DeviceOperator, Flux<DeviceOperator>, Mono<Void>> onChildUnbind) {
+        this.onChildUnbind = onChildUnbind;
+    }
+
     @Override
     public Mono<Void> onClientConnect(Transport transport,
                                       ClientConnection connection,
@@ -338,6 +364,16 @@ public class CompositeProtocolSupport implements ProtocolSupport {
             return Mono.empty();
         }
         return function.apply(connection, context);
+    }
+
+    @Override
+    public Mono<Void> onChildBind(DeviceOperator gateway, Flux<DeviceOperator> child) {
+        return onChildBind == null ? Mono.empty() : onChildBind.apply(gateway, child);
+    }
+
+    @Override
+    public Mono<Void> onChildUnbind(DeviceOperator gateway, Flux<DeviceOperator> child) {
+        return onChildUnbind == null ? Mono.empty() : onChildUnbind.apply(gateway, child);
     }
 
     public void addFeature(Transport transport, Feature... features) {
