@@ -7,6 +7,7 @@ import org.jetlinks.core.message.interceptor.DeviceMessageSenderInterceptor;
 import org.jetlinks.core.metadata.*;
 import org.jetlinks.core.server.ClientConnection;
 import org.jetlinks.core.server.DeviceGatewayContext;
+import org.springframework.core.Ordered;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -20,7 +21,7 @@ import java.util.Map;
  * @author zhouhao
  * @since 1.0.0
  */
-public interface ProtocolSupport extends Disposable {
+public interface ProtocolSupport extends Disposable, Ordered, Comparable<ProtocolSupport> {
     /**
      * @return 协议ID
      */
@@ -300,5 +301,26 @@ public interface ProtocolSupport extends Disposable {
      */
     default Flux<Feature> getFeatures(Transport transport) {
         return Flux.empty();
+    }
+
+    /**
+     * 在执行设备创建之前,执行指定的操作。通常用于自定义默认配置生成等操作
+     *
+     * @param deviceInfo 设备信息
+     * @return 新等设备信息
+     */
+    default Mono<DeviceInfo> doBeforeDeviceCreate(Transport transport,
+                                                  DeviceInfo deviceInfo) {
+        return Mono.just(deviceInfo);
+    }
+
+    @Override
+    default int getOrder() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    default int compareTo(@Nonnull ProtocolSupport o) {
+        return Integer.compare(this.getOrder(), o.getOrder());
     }
 }
