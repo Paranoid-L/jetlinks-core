@@ -9,6 +9,7 @@ import org.hswebframework.web.bean.FastBeanCopier;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiFunction;
 
 /**
  * @author zhouhao
@@ -37,33 +38,63 @@ public class CommonDeviceMessage implements DeviceMessage {
     }
 
     @Override
-    public synchronized DeviceMessage addHeader(String header, Object value) {
-        if (headers == null) {
-            this.headers = new ConcurrentHashMap<>();
-        }
+    @JsonIgnore
+    @JSONField(serialize = false)
+    public final String getThingType() {
+        return DeviceMessage.super.getThingType();
+    }
+
+    @Override
+    public CommonDeviceMessage messageId(String messageId) {
+        setMessageId(messageId);
+        return this;
+    }
+
+    @Override
+    public CommonDeviceMessage thingId(String thingType, String thingId) {
+        this.setDeviceId(thingId);
+        return this;
+    }
+
+    private Map<String, Object> safeGetHeader() {
+        return headers == null ? headers = new ConcurrentHashMap<>() : headers;
+    }
+
+    @Override
+    public CommonDeviceMessage timestamp(long timestamp) {
+        this.timestamp = timestamp;
+        return this;
+    }
+
+    @Override
+    public synchronized CommonDeviceMessage addHeader(String header, Object value) {
+
         if (header != null && value != null) {
-            this.headers.put(header, value);
+            safeGetHeader().put(header, value);
         }
         return this;
     }
 
     @Override
-    public synchronized DeviceMessage addHeaderIfAbsent(String header, Object value) {
-        if (headers == null) {
-            this.headers = new ConcurrentHashMap<>();
-        }
+    public synchronized CommonDeviceMessage addHeaderIfAbsent(String header, Object value) {
+
         if (header != null && value != null) {
-            this.headers.putIfAbsent(header, value);
+            safeGetHeader().putIfAbsent(header, value);
         }
         return this;
     }
 
     @Override
-    public DeviceMessage removeHeader(String header) {
+    public CommonDeviceMessage removeHeader(String header) {
         if (this.headers != null) {
             this.headers.remove(header);
         }
         return this;
+    }
+
+    @Override
+    public Object computeHeader(String key, BiFunction<String, Object, Object> computer) {
+       return safeGetHeader().compute(key, computer);
     }
 
     @Override

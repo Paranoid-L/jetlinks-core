@@ -3,12 +3,14 @@ package org.jetlinks.core.message;
 import com.alibaba.fastjson.parser.ParserConfig;
 import com.alibaba.fastjson.util.TypeUtils;
 import org.apache.commons.collections.MapUtils;
+import org.hswebframework.web.bean.FastBeanCopier;
 import org.jetlinks.core.metadata.Jsonable;
 
 import javax.annotation.Nullable;
 import java.io.Serializable;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 import static org.jetlinks.core.message.MessageType.UNKNOWN;
@@ -105,6 +107,19 @@ public interface Message extends Jsonable, Serializable {
         return addHeaderIfAbsent(header.getKey(), value);
     }
 
+    default <T> T getOrAddHeader(HeaderKey<T> header, Supplier<T> value) {
+        return this.computeHeader(header, (ignore, old) -> {
+            if (old == null) {
+                old = value.get();
+            }
+            return old;
+        });
+    }
+
+    default <T> T getOrAddHeaderDefault(HeaderKey<T> header) {
+        return getOrAddHeader(header,header::getDefaultValue);
+    }
+
     @SuppressWarnings("all")
     default <T> Optional<T> getHeader(HeaderKey<T> key) {
         return Optional.ofNullable(getHeaderOrElse(key, null));
@@ -139,7 +154,19 @@ public interface Message extends Jsonable, Serializable {
         return Optional.ofNullable(getHeaderOrElse(header, null));
     }
 
+    Object computeHeader(String key, BiFunction<String, Object, Object> computer);
+
+    @SuppressWarnings("all")
+    default <T> T computeHeader(HeaderKey<T> key, BiFunction<String, T, T> computer) {
+        return (T) computeHeader(key.getKey(),
+                                 (str, old) -> computer.apply(str, old == null ? null : TypeUtils.cast(old, key.getType(), ParserConfig.global)));
+    }
+
     default void validate() {
 
+    }
+
+    default Message copy() {
+        return FastBeanCopier.copy(this, this.getClass());
     }
 }

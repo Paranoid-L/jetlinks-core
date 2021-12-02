@@ -1,15 +1,18 @@
 package org.jetlinks.core.message;
 
 import com.alibaba.fastjson.JSONObject;
-import lombok.AllArgsConstructor;
-import org.hswebframework.web.bean.FastBeanCopier;
+import org.jetlinks.core.device.DeviceThingType;
+import org.jetlinks.core.message.event.DefaultEventMessage;
 import org.jetlinks.core.message.event.EventMessage;
 import org.jetlinks.core.message.firmware.*;
+import org.jetlinks.core.message.function.DefaultFunctionInvokeMessage;
+import org.jetlinks.core.message.function.DefaultFunctionInvokeMessageReply;
 import org.jetlinks.core.message.function.FunctionInvokeMessage;
 import org.jetlinks.core.message.function.FunctionInvokeMessageReply;
 import org.jetlinks.core.message.property.*;
 import org.jetlinks.core.message.state.DeviceStateCheckMessage;
 import org.jetlinks.core.message.state.DeviceStateCheckMessageReply;
+import org.jetlinks.core.things.ThingId;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -17,26 +20,25 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
-@AllArgsConstructor
 public enum MessageType {
 
     //上报设备属性
-    REPORT_PROPERTY(ReportPropertyMessage::new),
+    REPORT_PROPERTY(ReportPropertyMessage::new, DefaultReportPropertyMessage::new),
 
     //下行读写属性
-    READ_PROPERTY(ReadPropertyMessage::new),
-    WRITE_PROPERTY(WritePropertyMessage::new),
+    READ_PROPERTY(ReadPropertyMessage::new, DefaultReadPropertyMessage::new),
+    WRITE_PROPERTY(WritePropertyMessage::new, DefaultWritePropertyMessage::new),
     //上行读写属性回复
-    READ_PROPERTY_REPLY(ReadPropertyMessageReply::new),
-    WRITE_PROPERTY_REPLY(WritePropertyMessageReply::new),
+    READ_PROPERTY_REPLY(ReadPropertyMessageReply::new, DefaultReadPropertyMessageReply::new),
+    WRITE_PROPERTY_REPLY(WritePropertyMessageReply::new, DefaultWritePropertyMessageReply::new),
     //下行调用功能
-    INVOKE_FUNCTION(FunctionInvokeMessage::new) {
+    INVOKE_FUNCTION(FunctionInvokeMessage::new, DefaultFunctionInvokeMessage::new) {
         @Override
         public <T extends Message> T convert(Map<String, Object> map) {
             Object inputs = map.get("inputs");
             //处理以Map形式传入参数的场景
             if (inputs instanceof Map) {
-                Map<String,Object> newMap = new HashMap<>(map);
+                Map<String, Object> newMap = new HashMap<>(map);
                 @SuppressWarnings("unchecked")
                 Map<String, Object> inputMap = (Map<String, Object>) newMap.remove("inputs");
                 FunctionInvokeMessage message = super.convert(newMap);
@@ -47,9 +49,9 @@ public enum MessageType {
         }
     },
     //上行调用功能回复
-    INVOKE_FUNCTION_REPLY(FunctionInvokeMessageReply::new),
+    INVOKE_FUNCTION_REPLY(FunctionInvokeMessageReply::new, DefaultFunctionInvokeMessageReply::new),
     //事件消息
-    EVENT(EventMessage::new),
+    EVENT(EventMessage::new, DefaultEventMessage::new),
 
     //广播,暂未支持
     BROADCAST(DefaultBroadcastMessage::new),
@@ -130,7 +132,7 @@ public enum MessageType {
 
     //更新标签
     //since 1.1.2
-    UPDATE_TAG(UpdateTagMessage::new),
+    UPDATE_TAG(UpdateTagMessage::new, DefaultUpdateTingTagsMessage::new),
 
     //日志
     //since 1.1.4
@@ -158,15 +160,10 @@ public enum MessageType {
             return (T) reply;
 
         }
-    },
+    };
 
-    //以下是物相关消息
-
-    //物属性消息
-    THING_PROPERTY(ThingPropertyMessage::new)
-    ;
-
-    Supplier<? extends Message> newInstance;
+    final Supplier<? extends Message> deviceInstance;
+    final Supplier<? extends Message> thingInstance;
 
     private static final Map<String, MessageType> mapping;
 
@@ -178,15 +175,60 @@ public enum MessageType {
         }
     }
 
+    MessageType(Supplier<Message> deviceInstance) {
+        this(deviceInstance, null);
+    }
+
+    MessageType(Supplier<? extends Message> deviceInstance, Supplier<? extends ThingMessage> thingInstance) {
+        this.deviceInstance = deviceInstance;
+        this.thingInstance = thingInstance;
+    }
+
+    public <T extends DeviceMessage> T forDevice() {
+        return (T) deviceInstance.get();
+    }
+
+    public <T extends ThingMessage> T forThing() {
+        if (null == thingInstance) {
+            throw new UnsupportedOperationException("type " + name() + " unsupported for thing");
+        }
+        return (T) thingInstance.get();
+    }
+
+    public <T extends ThingMessage> T forThing(ThingId thingId) {
+        return forThing(thingId.getType(), thingId.getId());
+    }
+
+    public <T extends ThingMessage> T forThing(String type, String id) {
+        if (!DeviceThingType.device.name().equals(type)) {
+            return (T) this.forThing().thingId(type, id);
+        }
+        return (T) this.forDevice().thingId(type, id);
+    }
+
     @SuppressWarnings("all")
     public <T extends Message> T convert(Map<String, Object> map) {
-        if (newInstance != null) {
-            try {
-                return (T) FastBeanCopier.copy(map, newInstance);
-            } catch (Throwable e) {
-                //fallback jsonobject
-                return (T) new JSONObject(map).toJavaObject(newInstance.get().getClass());
+        Supplier<? extends Message> supplier = deviceInstance;
+
+        if (deviceInstance != null) {
+            if (thingInstance != null) {
+                //不是设备
+                Object type = map.get("thingType");
+                if (type != null) {
+                    if (!DeviceThingType.device.name().equals(type)) {
+                        supplier = thingInstance;
+                    }
+                }
             }
+            T msg = (T) supplier.get();
+            msg.fromJson(new JSONObject(map));
+            return msg;
+//            try {
+//                return (T) FastBeanCopier.copy(map, supplier);
+//            } catch (Throwable e) {
+//                //fallback jsonobject
+//                return (T) new JSONObject(map).toJavaObject(supplier.get().getClass());
+//            }
         }
         return null;
     }

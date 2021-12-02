@@ -12,7 +12,7 @@ import javax.validation.constraints.NotNull;
  * @author zhouhao
  * @since 1.0.0
  */
-public interface DeviceMessageReply extends DeviceMessage {
+public interface DeviceMessageReply extends DeviceMessage, ThingMessageReply {
 
     //是否成功
     boolean isSuccess();
@@ -49,13 +49,27 @@ public interface DeviceMessageReply extends DeviceMessage {
     //设置消息ID
     DeviceMessageReply messageId(@NotNull String messageId);
 
+    @Override
+    DeviceMessageReply timestamp(long timestamp);
+
     //添加头
     @Override
     DeviceMessageReply addHeader(@NotNull String header, @NotNull Object value);
 
     @Override
+    default DeviceMessageReply thingId(String type, String thingId) {
+        deviceId(thingId);
+        return this;
+    }
+
+    @Override
     default <T> DeviceMessageReply addHeader(@NotNull HeaderKey<T> header, @NotNull T value) {
         addHeader(header.getKey(), value);
         return this;
+    }
+
+    @Override
+    default DeviceMessageReply copy() {
+        return (DeviceMessageReply)ThingMessageReply.super.copy();
     }
 }
