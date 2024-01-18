@@ -3,9 +3,6 @@ package org.jetlinks.core;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
-import io.netty.util.AbstractReferenceCounted;
-import io.netty.util.Recycler;
 import io.netty.util.ReferenceCountUtil;
 import lombok.Getter;
 import lombok.Setter;
@@ -15,7 +12,6 @@ import org.hswebframework.web.bean.FastBeanCopier;
 import org.jetlinks.core.codec.Decoder;
 import org.jetlinks.core.codec.Encoder;
 import org.jetlinks.core.metadata.Jsonable;
-import org.jetlinks.core.utils.RecyclerUtils;
 
 import javax.annotation.Nonnull;
 import java.util.*;
@@ -24,8 +20,8 @@ import java.util.function.Supplier;
 @Getter
 @Setter
 @Slf4j
-public class NativePayload<T> extends AbstractReferenceCounted implements Payload {
-    public static boolean POOL_ENABLED = Boolean.parseBoolean(System.getProperty("jetlinks.eventbus.payload.pool.enabled", "true"));
+@Deprecated
+public class NativePayload<T> implements Payload {
 
     private T nativeObject;
 
@@ -35,12 +31,7 @@ public class NativePayload<T> extends AbstractReferenceCounted implements Payloa
 
     private ByteBuf buf;
 
-    private static final Recycler<NativePayload> POOL = RecyclerUtils.newRecycler(NativePayload.class, NativePayload::new, 1);
-
-    private final io.netty.util.Recycler.Handle<NativePayload> handle;
-
-    private NativePayload(io.netty.util.Recycler.Handle<NativePayload> handle) {
-        this.handle = handle;
+    private NativePayload() {
     }
 
     @Override
@@ -49,16 +40,15 @@ public class NativePayload<T> extends AbstractReferenceCounted implements Payloa
     }
 
     public static <T> NativePayload<T> of(T nativeObject, Encoder<T> encoder) {
-        NativePayload<T> payload;
-        try {
-            payload = POOL_ENABLED ? POOL.get() : new NativePayload<>(null);
-        } catch (Exception e) {
-            payload = new NativePayload<>(null);
-        }
-        payload.setRefCnt(1);
+        NativePayload<T> payload = new NativePayload<>();
+        ;
         payload.nativeObject = nativeObject;
         payload.encoder = encoder;
         return payload;
+    }
+
+    public static <T> NativePayload<T> of(T nativeObject) {
+        return of(nativeObject, (Encoder<T>) null);
     }
 
     public static <T> NativePayload<T> of(T nativeObject, Supplier<Payload> bodySupplier) {
@@ -88,6 +78,21 @@ public class NativePayload<T> extends AbstractReferenceCounted implements Payloa
         return Payload.super.decode(decoder, release);
     }
 
+    @SuppressWarnings("all")
+    @Override
+    public <T> T decode(Class<T> type) {
+        if (type.isInstance(nativeObject)) {
+            return (T) nativeObject;
+        }
+        if (type == JSONObject.class || type == Map.class) {
+            return (T) bodyToJson();
+        }
+        if (Map.class.isAssignableFrom(type)) {
+            return bodyToJson().toJavaObject(type);
+        }
+        return FastBeanCopier.copy(nativeObject, type);
+    }
+
     @Override
     public Object decode() {
         return decode(true);
@@ -107,35 +112,12 @@ public class NativePayload<T> extends AbstractReferenceCounted implements Payloa
     @Nonnull
     @Override
     public ByteBuf getBody() {
-        if (buf == null) {
-            synchronized (this) {
-                if (buf != null) {
-                    return buf;
-                }
-                ref = encoder.encode(nativeObject);
-                buf = Unpooled.unreleasableBuffer(ref.getBody());
-            }
-        }
-        return buf;
+        return null;
     }
 
     @Override
     public int refCnt() {
-        return super.refCnt();
-    }
-
-    @Override
-    protected void deallocate() {
-        this.buf = null;
-        this.nativeObject = null;
-        this.encoder = null;
-        if (this.ref != null) {
-            ReferenceCountUtil.safeRelease(this.ref);
-            this.ref = null;
-        }
-        if (handle != null) {
-            handle.recycle(this);
-        }
+        return 0;
     }
 
     @Override
@@ -145,7 +127,7 @@ public class NativePayload<T> extends AbstractReferenceCounted implements Payloa
 
     @Override
     public NativePayload<T> touch() {
-        super.touch();
+
         return this;
     }
 
@@ -156,7 +138,7 @@ public class NativePayload<T> extends AbstractReferenceCounted implements Payloa
 
     @Override
     public NativePayload<T> retain(int inc) {
-        super.retain(inc);
+
         return this;
     }
 
@@ -167,13 +149,13 @@ public class NativePayload<T> extends AbstractReferenceCounted implements Payloa
 
     @Override
     public boolean release(int decrement) {
-        return super.release(decrement);
+        return true;
     }
 
     @Override
     public String bodyToString(boolean release) {
         try {
-            return nativeObject.toString();
+            return String.valueOf(nativeObject);
         } finally {
             if (release) {
                 ReferenceCountUtil.safeRelease(this);
@@ -210,6 +192,7 @@ public class NativePayload<T> extends AbstractReferenceCounted implements Payloa
     }
 
     @Override
+    @SuppressWarnings("all")
     public JSONObject bodyToJson(boolean release) {
         try {
             if (nativeObject == null) {
@@ -217,6 +200,12 @@ public class NativePayload<T> extends AbstractReferenceCounted implements Payloa
             }
             if (nativeObject instanceof Jsonable) {
                 return ((Jsonable) nativeObject).toJson();
+            }
+            if (nativeObject instanceof JSONObject) {
+                return ((JSONObject) nativeObject);
+            }
+            if (nativeObject instanceof Map) {
+                return new JSONObject(((Map) nativeObject));
             }
             return FastBeanCopier.copy(nativeObject, JSONObject::new);
         } finally {

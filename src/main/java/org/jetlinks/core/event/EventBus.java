@@ -6,9 +6,12 @@ import org.jetlinks.core.codec.Decoder;
 import org.jetlinks.core.codec.Encoder;
 import org.jetlinks.core.codec.defaults.DirectCodec;
 import org.reactivestreams.Publisher;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
+
+import java.util.function.Function;
 
 /**
  * 基于订阅发布的事件总线,可用于事件传递,消息转发等.
@@ -21,20 +24,24 @@ public interface EventBus {
 
     /**
      * 从事件总线中订阅事件
-     * <p>
-     * 特别注意!!!
-     * <p>
-     * 如果没有调用
-     * {@link TopicPayload#bodyToString()},
-     * {@link TopicPayload#bodyToJson()},
-     * {@link TopicPayload#bodyToJsonArray()},
-     * {@link TopicPayload#getBytes()}
-     * 使用TopicPayload后需要手动调用{@link TopicPayload#release()}释放.
      *
      * @param subscription 订阅信息
      * @return 事件流
      */
     Flux<TopicPayload> subscribe(Subscription subscription);
+
+    /**
+     * 从事件总线中订阅事件并指定handler来处理事件，通过调用{@link Disposable#dispose()}来取消订阅
+     *
+     * @param subscription 订阅信息
+     * @return 事件流
+     */
+    default Disposable subscribe(Subscription subscription,
+                                 Function<TopicPayload, Mono<Void>> handler) {
+        return subscribe(subscription)
+                .flatMap(handler)
+                .subscribe();
+    }
 
     /**
      * 从事件总线中订阅事件,并按照指定的解码器进行数据转换
@@ -44,6 +51,7 @@ public interface EventBus {
      * @param <T>          解码后结果类型
      * @return 事件流
      */
+    @Deprecated
     <T> Flux<T> subscribe(Subscription subscription, Decoder<T> decoder);
 
     /**
@@ -66,6 +74,7 @@ public interface EventBus {
      * @param <T>         类型
      * @return 订阅者数量
      */
+    @Deprecated
     <T> Mono<Long> publish(String topic, Encoder<T> encoder, Publisher<? extends T> eventStream);
 
     /**
@@ -104,10 +113,12 @@ public interface EventBus {
      * @param <T>     事件类型
      * @return 订阅者数量
      */
+    @Deprecated
     default <T> Mono<Long> publish(String topic, Encoder<T> encoder, T event) {
         return publish(topic, encoder, Mono.just(event));
     }
 
+    @Deprecated
     default <T> Mono<Long> publish(String topic, Encoder<T> encoder, T event, Scheduler scheduler) {
         return publish(topic, encoder, Mono.just(event), scheduler);
     }
@@ -135,11 +146,12 @@ public interface EventBus {
         return publish(topic, Codecs.lookup(event.getClass()), event, scheduler);
     }
 
-
+    @Deprecated
     default Mono<Long> publish(String topic, Payload event) {
         return publish(topic, DirectCodec.INSTANCE, event);
     }
 
+    @Deprecated
     default Mono<Long> publish(String topic, Payload event, Scheduler scheduler) {
         return publish(topic, DirectCodec.INSTANCE, event, scheduler);
     }

@@ -1,17 +1,14 @@
 package org.jetlinks.core.message;
 
+import com.alibaba.fastjson.JSONObject;
 import lombok.Getter;
 import lombok.Setter;
-import org.springframework.util.StringUtils;
-
-import javax.annotation.Nullable;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.BiFunction;
+import org.hswebframework.web.bean.FastBeanCopier;
+import org.jetlinks.core.GenericHeaderSupport;
 
 @Getter
 @Setter
-public class DefaultBroadcastMessage implements BroadcastMessage {
+public class DefaultBroadcastMessage extends GenericHeaderSupport<DefaultBroadcastMessage> implements BroadcastMessage {
     private static final long serialVersionUID = -6849794470754667710L;
 
     private String messageId;
@@ -22,47 +19,34 @@ public class DefaultBroadcastMessage implements BroadcastMessage {
 
     private Message message;
 
-    private Map<String, Object> headers;
-
-    @Nullable
     @Override
-    public Map<String, Object> getHeaders() {
-        return headers;
-    }
-
-    private Map<String, Object> safeGetHeader() {
-        return headers == null ? headers = new ConcurrentHashMap<>() : headers;
-    }
-
-    @Override
-    public synchronized BroadcastMessage addHeader(String header, Object value) {
-        if (StringUtils.isEmpty(header) || StringUtils.isEmpty(value)) {
-            return this;
-        }
-        safeGetHeader().put(header, value);
+    public BroadcastMessage message(Message message) {
+        this.message = message;
         return this;
     }
 
     @Override
-    public synchronized BroadcastMessage addHeaderIfAbsent(String header, Object value) {
-        if (StringUtils.isEmpty(header) || StringUtils.isEmpty(value)) {
-            return this;
-        }
-        safeGetHeader().putIfAbsent(header, value);
+    public BroadcastMessage address(String address) {
+        this.address = address;
         return this;
     }
 
     @Override
-    public synchronized BroadcastMessage removeHeader(String header) {
-        if (StringUtils.isEmpty(header)) {
-            return this;
-        }
-        safeGetHeader().remove(header);
-        return this;
+    public JSONObject toJson() {
+        JSONObject json = FastBeanCopier.copy(this, JSONObject::new);
+        json.put("messageType", getMessageType().name());
+        return json;
     }
 
     @Override
-    public Object computeHeader(String key, BiFunction<String, Object, Object> computer) {
-        return safeGetHeader().compute(key, computer);
+    public void fromJson(JSONObject jsonObject) {
+        FastBeanCopier.copy(jsonObject, this, "headers");
+        if (timestamp == 0) {
+            timestamp = System.currentTimeMillis();
+        }
+        JSONObject headers = jsonObject.getJSONObject("headers");
+        if (null != headers) {
+            headers.forEach(this::addHeader);
+        }
     }
 }

@@ -39,7 +39,7 @@ public enum DeviceConfigKey implements ConfigKey<String> {
 
     ;
 
-    String name;
+    final String name;
 
     public static ConfigKey<Boolean> isGatewayDevice = ConfigKey.of("isGatewayDevice", "是否为网关设备");
 
@@ -53,7 +53,7 @@ public enum DeviceConfigKey implements ConfigKey<String> {
     }
 
     @Override
-    public Class<String> getType() {
+    public Class<String> getValueType() {
         return String.class;
     }
 }

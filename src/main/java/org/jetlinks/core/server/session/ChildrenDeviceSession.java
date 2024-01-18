@@ -5,24 +5,28 @@ import lombok.extern.slf4j.Slf4j;
 import org.jetlinks.core.device.DeviceOperator;
 import org.jetlinks.core.message.codec.EncodedMessage;
 import org.jetlinks.core.message.codec.Transport;
+import org.jetlinks.core.utils.Reactors;
 import reactor.core.publisher.Mono;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BiConsumer;
 
 
 @Slf4j
-public class ChildrenDeviceSession implements DeviceSession {
+public class ChildrenDeviceSession implements DeviceSession, ReplaceableDeviceSession {
     @Getter
     private final String id;
 
     @Getter
     private final String deviceId;
 
-    private final DeviceSession parent;
+    @Getter
+    private DeviceSession parent;
 
     @Getter
     private final DeviceOperator operator;
@@ -33,6 +37,8 @@ public class ChildrenDeviceSession implements DeviceSession {
 
     private long keepAliveTimeOutMs = -1;
 
+    private BiConsumer<DeviceSession, DeviceSession> parentChanged;
+
     public ChildrenDeviceSession(String deviceId, DeviceSession parent, DeviceOperator operator) {
         this.id = deviceId;
         this.parent = parent;
@@ -42,7 +48,7 @@ public class ChildrenDeviceSession implements DeviceSession {
 
     }
 
-    public DeviceOperator getParentDevice(){
+    public DeviceOperator getParentDevice() {
         return parent.getOperator();
     }
 
@@ -82,11 +88,12 @@ public class ChildrenDeviceSession implements DeviceSession {
 
     @Override
     public boolean isAlive() {
-        if (keepAliveTimeOutMs <= 0) {
-            return parent.isAlive();
-        }
-        return System.currentTimeMillis() - lastKeepAliveTime < keepAliveTimeOutMs
-                && parent.isAlive();
+        return aliveByKeepAlive() && parent.isAlive();
+    }
+
+    private boolean aliveByKeepAlive() {
+        return keepAliveTimeOutMs <= 0
+                || System.currentTimeMillis() - lastKeepAliveTime < keepAliveTimeOutMs;
     }
 
     @Override
@@ -100,11 +107,6 @@ public class ChildrenDeviceSession implements DeviceSession {
     @Override
     public Optional<String> getServerId() {
         return parent.getServerId();
-    }
-
-    @Override
-    public boolean isWrapFrom(Class<?> type) {
-        return type == ChildrenDeviceSession.class || parent.isWrapFrom(type);
     }
 
     @Override
@@ -123,12 +125,52 @@ public class ChildrenDeviceSession implements DeviceSession {
     }
 
     @Override
+    public boolean isWrapFrom(Class<?> type) {
+        return type.isInstance(this) || parent.isWrapFrom(type);
+    }
+
+    @Override
     public <T extends DeviceSession> T unwrap(Class<T> type) {
-        return type == ChildrenDeviceSession.class ? type.cast(this) : parent.unwrap(type);
+        return type.isInstance(this) ? type.cast(this) : parent.unwrap(type);
+    }
+
+    @Override
+    public Mono<Boolean> isAliveAsync() {
+        //心跳超时
+        if (!aliveByKeepAlive()) {
+            return Reactors.ALWAYS_FALSE;
+        }
+        //判断上级
+        return parent.isAliveAsync();
+    }
+
+    @Override
+    public boolean isChanged(DeviceSession another) {
+        return parent.isChanged(another);
     }
 
     @Override
     public String toString() {
         return "children device[" + deviceId + "] in " + parent;
+    }
+
+    public synchronized void doOnParentChanged(BiConsumer<DeviceSession, DeviceSession> consumer) {
+        this.parentChanged = consumer;
+    }
+
+    @Override
+    public void replaceWith(DeviceSession session) {
+        if (session == this || Objects.equals(session.getDeviceId(), this.getDeviceId())) {
+            throw new IllegalStateException("can not replace with self");
+        }
+        DeviceSession old = this.parent;
+        if (session.isWrapFrom(ChildrenDeviceSession.class)) {
+            this.parent = session.unwrap(ChildrenDeviceSession.class).getParent();
+        } else {
+            this.parent = session;
+        }
+        if (parentChanged != null) {
+            parentChanged.accept(old, this.parent);
+        }
     }
 }

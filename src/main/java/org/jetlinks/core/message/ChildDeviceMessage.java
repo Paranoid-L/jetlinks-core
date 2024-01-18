@@ -1,11 +1,16 @@
 package org.jetlinks.core.message;
 
 import com.alibaba.fastjson.JSONObject;
+import com.google.common.collect.Maps;
 import lombok.Getter;
 import lombok.Setter;
 import org.jetlinks.core.enums.ErrorCode;
 import org.jetlinks.core.exception.DeviceOperationException;
+import org.jetlinks.core.utils.SerializeUtils;
 
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -20,7 +25,7 @@ import java.util.Set;
  */
 @Getter
 @Setter
-public class ChildDeviceMessage extends CommonDeviceMessage implements RepayableDeviceMessage<ChildDeviceMessageReply> {
+public class ChildDeviceMessage extends CommonDeviceMessage<ChildDeviceMessage> implements RepayableDeviceMessage<ChildDeviceMessageReply> {
     private String childDeviceId;
 
     private Message childDeviceMessage;
@@ -55,6 +60,18 @@ public class ChildDeviceMessage extends CommonDeviceMessage implements Repayable
         return json;
     }
 
+    @Override
+    public void fromJson(JSONObject jsonObject) {
+        super.fromJson(new JSONObject(Maps.filterKeys(jsonObject, k -> !"childDeviceMessage".equals(k))));
+
+        JSONObject json = jsonObject.getJSONObject("childDeviceMessage");
+        if (json != null) {
+            childDeviceMessage = MessageType
+                    .convertMessage(json)
+                    .orElse(null);
+        }
+    }
+
     public MessageType getMessageType() {
         return MessageType.CHILD;
     }
@@ -73,5 +90,19 @@ public class ChildDeviceMessage extends CommonDeviceMessage implements Repayable
                 deviceId.add(childId);
             } while (msg instanceof ChildDeviceMessage);
         }
+    }
+
+    @Override
+    public void writeExternal(ObjectOutput out) throws IOException {
+        super.writeExternal(out);
+        SerializeUtils.writeNullableUTF(childDeviceId, out);
+        out.writeObject(childDeviceMessage);
+    }
+
+    @Override
+    public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
+        super.readExternal(in);
+        this.childDeviceId = SerializeUtils.readNullableUTF(in);
+        this.childDeviceMessage = (Message) in.readObject();
     }
 }

@@ -3,12 +3,9 @@ package org.jetlinks.core.message;
 import com.alibaba.fastjson.JSONObject;
 import lombok.*;
 import org.hswebframework.web.bean.FastBeanCopier;
+import org.jetlinks.core.GenericHeaderSupport;
 import org.jetlinks.core.enums.ErrorCode;
 import org.jetlinks.core.exception.DeviceOperationException;
-
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.BiFunction;
 
 /**
  * @author zhouhao
@@ -20,7 +17,7 @@ import java.util.function.BiFunction;
 @AllArgsConstructor
 @NoArgsConstructor
 @SuppressWarnings("all")
-public class CommonThingMessageReply<SELF extends CommonThingMessageReply<SELF>> implements ThingMessageReply {
+public class CommonThingMessageReply<SELF extends CommonThingMessageReply<SELF>> extends GenericHeaderSupport<SELF> implements ThingMessageReply {
     private static final long serialVersionUID = -6849794470754667710L;
 
     private boolean success = true;
@@ -37,41 +34,11 @@ public class CommonThingMessageReply<SELF extends CommonThingMessageReply<SELF>>
 
     private long timestamp = System.currentTimeMillis();
 
-    private Map<String, Object> headers;
-
-    private Map<String, Object> safeGetHeader() {
-        return headers == null ? headers = new ConcurrentHashMap<>() : headers;
-    }
-
     @Override
     public ThingMessageReply thingId(String type, String thingId) {
         this.thingType = type;
         this.thingId = thingId;
         return this;
-    }
-
-    @Override
-    public synchronized SELF addHeaderIfAbsent(String header, Object value) {
-        if (header != null && value != null) {
-            safeGetHeader().putIfAbsent(header, value);
-        }
-        return castSelf();
-    }
-
-    @Override
-    public synchronized SELF addHeader(String header, Object value) {
-        if (header != null && value != null) {
-            safeGetHeader().put(header, value);
-        }
-        return castSelf();
-    }
-
-    @Override
-    public SELF removeHeader(String header) {
-        if (headers != null) {
-            this.headers.remove(header);
-        }
-        return castSelf();
     }
 
     public SELF code(String code) {
@@ -94,6 +61,12 @@ public class CommonThingMessageReply<SELF extends CommonThingMessageReply<SELF>>
     @Override
     public SELF success() {
         success = true;
+        return castSelf();
+    }
+
+    @Override
+    public SELF success(boolean success) {
+        this.success = success;
         return castSelf();
     }
 
@@ -143,42 +116,24 @@ public class CommonThingMessageReply<SELF extends CommonThingMessageReply<SELF>>
     }
 
     @Override
-    public <T> SELF addHeader(HeaderKey<T> header, T value) {
-        return (SELF) ThingMessageReply.super.addHeader(header, value);
-    }
-
-    @Override
     public JSONObject toJson() {
         JSONObject json = FastBeanCopier.copy(this, JSONObject::new);
         json.put("messageType", getMessageType().name());
         return json;
     }
 
-    @SuppressWarnings("all")
-    protected SELF castSelf() {
-        return (SELF) this;
-    }
-
     @Override
     public void fromJson(JSONObject jsonObject) {
-        ThingMessageReply.super.fromJson(jsonObject);
-        success = jsonObject.getBooleanValue("success");
-        timestamp = jsonObject.getLongValue("timestamp");
+        FastBeanCopier.copy(jsonObject, this, "headers");
         if (timestamp == 0) {
             timestamp = System.currentTimeMillis();
         }
-        messageId = jsonObject.getString("messageId");
-        thingType = jsonObject.getString("thingType");
-        thingId = jsonObject.getString("thingId");
-        code = jsonObject.getString("code");
-        message = jsonObject.getString("message");
-        headers = jsonObject.getJSONObject("headers");
+        JSONObject headers = jsonObject.getJSONObject("headers");
+        if (null != headers) {
+            headers.forEach(this::addHeader);
+        }
     }
 
-    @Override
-    public Object computeHeader(String key, BiFunction<String, Object, Object> computer) {
-        return safeGetHeader().compute(key, computer);
-    }
 
     @Override
     public String toString() {

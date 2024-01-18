@@ -27,7 +27,9 @@ public interface ClusterManager {
 
     /**
      * @return 高可用管理器
+     * @deprecated 已弃用,请使用 ExtendedCluster
      */
+    @Deprecated
     HaManager getHaManager();
 
     /**
@@ -58,16 +60,20 @@ public interface ClusterManager {
      */
     <K, V> ClusterCache<K, V> getCache(String cache);
 
+    <K, V> ClusterCache<K, V> createCache(String cacheName);
+
     /**
      * 获取Set结构
+     *
      * @param name 名称
-     * @param <V> 集合元素类型
+     * @param <V>  集合元素类型
      * @return ClusterSet
      */
     <V> ClusterSet<V> getSet(String name);
 
     /**
      * 获取计数器
+     *
      * @param name 名称
      * @return 计数器
      */

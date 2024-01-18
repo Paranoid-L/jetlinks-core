@@ -2,16 +2,18 @@ package org.jetlinks.core.message.property;
 
 import com.alibaba.fastjson.annotation.JSONField;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.google.common.collect.Maps;
 import org.jetlinks.core.metadata.PropertyMetadata;
+import org.jetlinks.core.utils.SerializeUtils;
 import org.springframework.util.CollectionUtils;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Collectors;
+import java.io.Externalizable;
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
+import java.util.*;
 
 /**
  * 定义属性相关消息操作接口
@@ -22,7 +24,7 @@ import java.util.stream.Collectors;
  * @see WritePropertyMessageReply
  * @since 1.1.7
  */
-public interface PropertyMessage {
+public interface PropertyMessage extends Externalizable {
 
     /**
      * 获取全部属性值,key为物模型中的属性ID,value为属性的值
@@ -68,7 +70,7 @@ public interface PropertyMessage {
         if (CollectionUtils.isEmpty(sourceTime)) {
             return Optional.empty();
         }
-        return Optional.of(sourceTime.get(property));
+        return Optional.ofNullable(sourceTime.get(property));
     }
 
     /**
@@ -77,13 +79,13 @@ public interface PropertyMessage {
      * @param property 属性ID
      * @return Optional 属性状态
      */
-   default Optional<String> getPropertyState(@Nonnull String property){
-       Map<String, String> states = getPropertyStates();
-       if (CollectionUtils.isEmpty(states)) {
-           return Optional.empty();
-       }
-       return Optional.of(states.get(property));
-   }
+    default Optional<String> getPropertyState(@Nonnull String property) {
+        Map<String, String> states = getPropertyStates();
+        if (CollectionUtils.isEmpty(states)) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(states.get(property));
+    }
 
     /**
      * 获取属性值
@@ -126,14 +128,34 @@ public interface PropertyMessage {
         if (CollectionUtils.isEmpty(properties)) {
             return Collections.emptyList();
         }
-        return properties
-                .entrySet()
-                .stream()
-                .map(prop -> {
-                    long ts = getPropertySourceTime(prop.getKey()).orElse(getTimestamp());
-                    String state = getPropertyState(prop.getKey()).orElse(null);
-                    return SimplePropertyValue.of(prop.getKey(), prop.getValue(), ts, state);
-                })
-                .collect(Collectors.toList());
+        List<Property> list = new ArrayList<>(properties.size());
+        for (Map.Entry<String, Object> entry : properties.entrySet()) {
+            long ts = getPropertySourceTime(entry.getKey()).orElse(getTimestamp());
+            String state = getPropertyState(entry.getKey()).orElse(null);
+            list.add(SimplePropertyValue.of(entry.getKey(), entry.getValue(), ts, state));
+        }
+        return list;
+    }
+
+    PropertyMessage properties(Map<String, Object> properties);
+
+    PropertyMessage propertySourceTimes(Map<String, Long> times);
+
+    PropertyMessage propertyStates(Map<String, String> states);
+
+
+    @Override
+    default void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
+        properties(SerializeUtils.readMap(in, Maps::newLinkedHashMapWithExpectedSize));
+        propertySourceTimes(SerializeUtils.readMap(in, Maps::newLinkedHashMapWithExpectedSize));
+        propertyStates(SerializeUtils.readMap(in, Maps::newLinkedHashMapWithExpectedSize));
+
+    }
+
+    @Override
+    default void writeExternal(ObjectOutput out) throws IOException {
+        SerializeUtils.writeKeyValue(getProperties(), out);
+        SerializeUtils.writeKeyValue(getPropertySourceTimes(), out);
+        SerializeUtils.writeKeyValue(getPropertyStates(), out);
     }
 }

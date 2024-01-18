@@ -8,6 +8,7 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import javax.annotation.Nullable;
 import java.time.Duration;
 import java.util.Collection;
 
@@ -25,9 +26,9 @@ public interface DeviceOperationBroker {
      * @param deviceGatewayServerId 设备所在服务ID {@link ServerNode#getId()}
      * @param deviceIdList          设备列表
      * @return 设备状态
-     * @see DeviceOperator#getConnectionServerId()
+     * @see org.jetlinks.core.device.session.DeviceSessionManager#isAlive(String)
      */
-    Flux<DeviceStateInfo> getDeviceState(String deviceGatewayServerId, Collection<String> deviceIdList);
+    Flux<DeviceStateInfo> getDeviceState(@Nullable String deviceGatewayServerId, Collection<String> deviceIdList);
 
     /**
      * 根据消息ID监听响应

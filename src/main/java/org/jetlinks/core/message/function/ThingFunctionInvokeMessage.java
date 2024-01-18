@@ -1,10 +1,16 @@
 package org.jetlinks.core.message.function;
 
 import com.alibaba.fastjson.JSONObject;
+import com.google.common.collect.Maps;
 import org.jetlinks.core.message.MessageType;
 import org.jetlinks.core.message.RepayableThingMessage;
+import org.jetlinks.core.metadata.FunctionMetadata;
 import org.jetlinks.core.things.ThingType;
+import org.jetlinks.core.utils.SerializeUtils;
 
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -18,11 +24,22 @@ import java.util.stream.Collectors;
  */
 public interface ThingFunctionInvokeMessage<R extends ThingFunctionInvokeMessageReply> extends RepayableThingMessage<R> {
 
+    /**
+     * @return functionId
+     * @see FunctionMetadata#getId()
+     */
     String getFunctionId();
 
+    /**
+     * 功能参数
+     *
+     * @return FunctionParameter
+     */
     List<FunctionParameter> getInputs();
 
     ThingFunctionInvokeMessage<R> addInput(FunctionParameter parameter);
+
+    ThingFunctionInvokeMessage<R> functionId(String id);
 
     @Override
     R newReply();
@@ -32,11 +49,12 @@ public interface ThingFunctionInvokeMessage<R extends ThingFunctionInvokeMessage
     }
 
     default Optional<Object> getInput(String name) {
-        return getInputs()
-                .stream()
-                .filter(param -> param.getName().equals(name))
-                .map(FunctionParameter::getValue)
-                .findFirst();
+        for (FunctionParameter input : getInputs()) {
+            if (input.getName().equals(name)) {
+                return Optional.ofNullable(input.getValue());
+            }
+        }
+        return Optional.empty();
     }
 
     default Optional<Object> getInput(int index) {
@@ -46,9 +64,12 @@ public interface ThingFunctionInvokeMessage<R extends ThingFunctionInvokeMessage
     }
 
     default Map<String, Object> inputsToMap() {
-        return getInputs()
-                .stream()
-                .collect(Collectors.toMap(FunctionParameter::getName, FunctionParameter::getValue, (a, b) -> a));
+        List<FunctionParameter> inputs = getInputs();
+        Map<String, Object> map = Maps.newLinkedHashMapWithExpectedSize(inputs.size());
+        for (FunctionParameter input : inputs) {
+            map.put(input.getName(), input.getValue());
+        }
+        return map;
     }
 
     default <T> T inputsToBean(Class<T> beanType) {
@@ -57,15 +78,17 @@ public interface ThingFunctionInvokeMessage<R extends ThingFunctionInvokeMessage
     }
 
     default List<Object> inputsToList() {
-        return getInputs().stream()
-                          .map(FunctionParameter::getValue)
-                          .collect(Collectors.toList());
+        return getInputs()
+                .stream()
+                .map(FunctionParameter::getValue)
+                .collect(Collectors.toList());
     }
 
     default Object[] inputsToArray() {
-        return getInputs().stream()
-                          .map(FunctionParameter::getValue)
-                          .toArray();
+        return getInputs()
+                .stream()
+                .map(FunctionParameter::getValue)
+                .toArray();
     }
 
     default ThingFunctionInvokeMessage<R> addInput(String name, Object value) {
@@ -85,4 +108,20 @@ public interface ThingFunctionInvokeMessage<R extends ThingFunctionInvokeMessage
         return message;
     }
 
+    @Override
+    default void writeExternal(ObjectOutput out) throws IOException {
+        RepayableThingMessage.super.writeExternal(out);
+        SerializeUtils.writeNullableUTF(getFunctionId(), out);
+        SerializeUtils.writeKeyValue(getInputs(),
+                                     FunctionParameter::getName,
+                                     FunctionParameter::getValue,
+                                     out);
+    }
+
+    @Override
+    default void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
+        RepayableThingMessage.super.readExternal(in);
+        this.functionId(SerializeUtils.readNullableUTF(in));
+        SerializeUtils.readKeyValue(in,this::addInput);
+    }
 }

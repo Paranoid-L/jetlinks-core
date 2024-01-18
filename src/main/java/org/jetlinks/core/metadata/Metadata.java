@@ -1,5 +1,8 @@
 package org.jetlinks.core.metadata;
 
+import org.jetlinks.core.config.ConfigKey;
+
+import java.io.Serializable;
 import java.util.Map;
 import java.util.Optional;
 
@@ -9,7 +12,7 @@ import java.util.Optional;
  * @author zhouhao
  * @since 1.0.0
  */
-public interface Metadata {
+public interface Metadata extends Serializable {
 
     /**
      * 唯一标识别
@@ -44,9 +47,18 @@ public interface Metadata {
      * @return 拓展配置值
      */
     default Optional<Object> getExpand(String key) {
-        return Optional.ofNullable(getExpands())
-                       .map(map -> map.get(key));
+        return Optional
+                .ofNullable(getExpands())
+                .map(map -> map.get(key));
     }
+
+    default <T> Optional<T> getExpand(ConfigKey<T> key) {
+        return Optional
+                .ofNullable(getExpands())
+                .map(map -> map.get(key.getKey()))
+                .map(key::convertValue);
+    }
+
 
     /**
      * 修改拓展配置

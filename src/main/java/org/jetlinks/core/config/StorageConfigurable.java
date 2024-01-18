@@ -7,12 +7,29 @@ import reactor.core.publisher.Mono;
 
 import java.util.Collection;
 import java.util.Map;
-import java.util.Set;
 
+/**
+ * 使用{@link ConfigStorage}来提供配置支持
+ *
+ * @author zhouhao
+ * @see ConfigStorage
+ * @see ConfigStorageManager
+ * @since 1.0
+ */
 public interface StorageConfigurable extends Configurable {
 
+    /**
+     * 异步获取配置器
+     *
+     * @return ConfigStorage
+     */
     Mono<ConfigStorage> getReactiveStorage();
 
+    /**
+     * 获取上级配置器
+     *
+     * @return Configurable
+     */
     default Mono<? extends Configurable> getParent() {
         return Mono.empty();
     }
@@ -23,12 +40,12 @@ public interface StorageConfigurable extends Configurable {
     }
 
     default Mono<Value> getConfig(String key, boolean fallbackParent) {
-        return getReactiveStorage()
-                .flatMap(store -> store.getConfig(key))
-                .switchIfEmpty(fallbackParent
-                                       ? Mono.defer(() -> getParent().flatMap(parent -> parent.getConfig(key)))
-                                       : Mono.empty()
-                );
+        if (fallbackParent) {
+            return getReactiveStorage()
+                    .flatMap(store -> store.getConfig(key))
+                    .switchIfEmpty(Mono.defer(()-> getParent().flatMap(parent -> parent.getConfig(key))));
+        }
+        return getReactiveStorage().flatMap(store -> store.getConfig(key));
     }
 
     default Mono<Values> getConfigs(Collection<String> keys, boolean fallbackParent) {
@@ -37,7 +54,7 @@ public interface StorageConfigurable extends Configurable {
                 .flatMap(values -> {
                     //尝试获取上一级的配置
                     if (!keys.isEmpty() && values.size() != keys.size() && fallbackParent) {
-                        Set<String> nonExistent = values.getNonExistentKeys(keys);
+                        Collection<String> nonExistent = values.getNonExistentKeys(keys);
                         return getParent()
                                 .flatMap(parent -> parent.getConfigs(nonExistent))
                                 .map(parentValues -> parentValues.merge(values))

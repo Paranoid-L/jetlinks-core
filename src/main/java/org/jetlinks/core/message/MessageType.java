@@ -1,7 +1,10 @@
 package org.jetlinks.core.message;
 
 import com.alibaba.fastjson.JSONObject;
+import com.google.common.collect.Maps;
+import lombok.SneakyThrows;
 import org.jetlinks.core.device.DeviceThingType;
+import org.jetlinks.core.message.collector.*;
 import org.jetlinks.core.message.event.DefaultEventMessage;
 import org.jetlinks.core.message.event.EventMessage;
 import org.jetlinks.core.message.firmware.*;
@@ -14,6 +17,8 @@ import org.jetlinks.core.message.state.DeviceStateCheckMessage;
 import org.jetlinks.core.message.state.DeviceStateCheckMessageReply;
 import org.jetlinks.core.things.ThingId;
 
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -32,22 +37,7 @@ public enum MessageType {
     READ_PROPERTY_REPLY(ReadPropertyMessageReply::new, DefaultReadPropertyMessageReply::new),
     WRITE_PROPERTY_REPLY(WritePropertyMessageReply::new, DefaultWritePropertyMessageReply::new),
     //下行调用功能
-    INVOKE_FUNCTION(FunctionInvokeMessage::new, DefaultFunctionInvokeMessage::new) {
-        @Override
-        public <T extends Message> T convert(Map<String, Object> map) {
-            Object inputs = map.get("inputs");
-            //处理以Map形式传入参数的场景
-            if (inputs instanceof Map) {
-                Map<String, Object> newMap = new HashMap<>(map);
-                @SuppressWarnings("unchecked")
-                Map<String, Object> inputMap = (Map<String, Object>) newMap.remove("inputs");
-                FunctionInvokeMessage message = super.convert(newMap);
-                inputMap.forEach(message::addInput);
-                return (T) message;
-            }
-            return super.convert(map);
-        }
-    },
+    INVOKE_FUNCTION(FunctionInvokeMessage::new, DefaultFunctionInvokeMessage::new),
     //上行调用功能回复
     INVOKE_FUNCTION_REPLY(FunctionInvokeMessageReply::new, DefaultFunctionInvokeMessageReply::new),
     //事件消息
@@ -74,35 +64,9 @@ public enum MessageType {
     DERIVED_METADATA(DerivedMetadataMessage::new),
 
     //下行子设备消息
-    CHILD(ChildDeviceMessage::new) {
-        @Override
-        @SuppressWarnings("all")
-        public <T extends Message> T convert(Map<String, Object> map) {
-            Object message = map.remove("childDeviceMessage");
-            ChildDeviceMessage children = super.convert(map);
-            if (message instanceof Map) {
-                this.convertMessage(((Map<String, Object>) message))
-                    .ifPresent(children::setChildDeviceMessage);
-            }
-
-            return (T) children;
-        }
-    },
+    CHILD(ChildDeviceMessage::new),
     //上行子设备消息回复
-    CHILD_REPLY(ChildDeviceMessageReply::new) {
-        @Override
-        @SuppressWarnings("all")
-        public <T extends Message> T convert(Map<String, Object> map) {
-            Object message = map.remove("childDeviceMessage");
-            ChildDeviceMessageReply children = super.convert(map);
-            if (message instanceof Map) {
-                this.convertMessage(((Map<String, Object>) message))
-                    .ifPresent(children::setChildDeviceMessage);
-            }
-
-            return (T) children;
-        }
-    },
+    CHILD_REPLY(ChildDeviceMessageReply::new),
 
     //读取设备固件信息
     READ_FIRMWARE(ReadFirmwareMessage::new),
@@ -145,6 +109,13 @@ public enum MessageType {
     STATE_CHECK(DeviceStateCheckMessage::new),
     STATE_CHECK_REPLY(DeviceStateCheckMessageReply::new),
 
+    //数采数据上报消息
+    REPORT_COLLECTOR(ReportCollectorDataMessage::new),
+    READ_COLLECTOR_DATA(ReadCollectorDataMessage::new),
+    READ_COLLECTOR_DATA_REPLY(ReadCollectorDataMessageReply::new),
+    WRITE_COLLECTOR_DATA(WriteCollectorDataMessage::new),
+    WRITE_COLLECTOR_DATA_REPLY(WriteCollectorDataMessageReply::new),
+
     //未知消息
     UNKNOWN(null) {
         @Override
@@ -185,12 +156,23 @@ public enum MessageType {
     }
 
     public <T extends DeviceMessage> T forDevice() {
-        return (T) deviceInstance.get();
+        if (deviceInstance == null) {
+            return null;
+        }
+        Message msg = deviceInstance.get();
+        if (msg instanceof DeviceMessage) {
+            return (T) msg;
+        }
+        return null;
+    }
+
+    public boolean iSupportDevice() {
+        return deviceInstance != null;
     }
 
     public <T extends ThingMessage> T forThing() {
         if (null == thingInstance) {
-            throw new UnsupportedOperationException("type " + name() + " unsupported for thing");
+            return null;
         }
         return (T) thingInstance.get();
     }
@@ -200,10 +182,16 @@ public enum MessageType {
     }
 
     public <T extends ThingMessage> T forThing(String type, String id) {
+        T thing;
         if (!DeviceThingType.device.name().equals(type)) {
-            return (T) this.forThing().thingId(type, id);
+            thing = this.forThing();
+        } else {
+            thing = this.forDevice();
         }
-        return (T) this.forDevice().thingId(type, id);
+        if (thing != null) {
+            return (T) thing.thingId(type, id);
+        }
+        return null;
     }
 
     @SuppressWarnings("all")
@@ -223,12 +211,6 @@ public enum MessageType {
             T msg = (T) supplier.get();
             msg.fromJson(new JSONObject(map));
             return msg;
-//            try {
-//                return (T) FastBeanCopier.copy(map, supplier);
-//            } catch (Throwable e) {
-//                //fallback jsonobject
-//                return (T) new JSONObject(map).toJavaObject(supplier.get().getClass());
-//            }
         }
         return null;
     }
@@ -270,4 +252,29 @@ public enum MessageType {
         return Optional.of(UNKNOWN);
     }
 
+    static final MessageType[] types = values();
+
+    @SneakyThrows
+    public static Message readExternal(ObjectInput input) {
+        int type = input.readByte();
+        MessageType messageType = types[type];
+        boolean isDevice = input.readBoolean();
+        Message message;
+        if (isDevice && messageType.deviceInstance != null) {
+            message = messageType.deviceInstance.get();
+        } else if (messageType.thingInstance != null) {
+            message = messageType.thingInstance.get();
+        } else {
+            message = new CommonDeviceMessage();
+        }
+        message.readExternal(input);
+        return message;
+    }
+
+    @SneakyThrows
+    public static void writeExternal(Message message, ObjectOutput output) {
+        output.writeByte(message.getMessageType().ordinal());
+        output.writeBoolean(message instanceof DeviceMessage);
+        message.writeExternal(output);
+    }
 }

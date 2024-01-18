@@ -3,21 +3,29 @@ package org.jetlinks.core.defaults;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
+import lombok.SneakyThrows;
 import org.jetlinks.core.ProtocolSupport;
 import org.jetlinks.core.device.*;
 import org.jetlinks.core.message.codec.DeviceMessageCodec;
 import org.jetlinks.core.message.codec.Transport;
 import org.jetlinks.core.message.interceptor.DeviceMessageSenderInterceptor;
 import org.jetlinks.core.metadata.*;
+import org.jetlinks.core.route.Route;
 import org.jetlinks.core.server.ClientConnection;
 import org.jetlinks.core.server.DeviceGatewayContext;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
+import org.springframework.util.StreamUtils;
 import reactor.core.Disposable;
 import reactor.core.Disposables;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import javax.annotation.Nonnull;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiFunction;
@@ -35,7 +43,7 @@ public class CompositeProtocolSupport implements ProtocolSupport {
 
     private String description;
 
-    private DeviceMetadataCodec metadataCodec;
+    private DeviceMetadataCodec metadataCodec = DeviceMetadataCodecs.defaultCodec();
 
     @Getter(AccessLevel.PRIVATE)
     private final Map<String, Supplier<Mono<ConfigMetadata>>> configMetadata = new ConcurrentHashMap<>();
@@ -86,6 +94,9 @@ public class CompositeProtocolSupport implements ProtocolSupport {
 
     private Map<String, Flux<Feature>> features = new ConcurrentHashMap<>();
     private List<Feature> globalFeatures = new CopyOnWriteArrayList<>();
+
+    private Map<String, List<Route>> routes = new ConcurrentHashMap<>();
+    private Map<String, Supplier<String>> docFiles = new ConcurrentHashMap<>();
 
     private int order = Integer.MAX_VALUE;
 
@@ -181,6 +192,11 @@ public class CompositeProtocolSupport implements ProtocolSupport {
     public void setExpandsConfigMetadata(Transport transport,
                                          ExpandsConfigMetadataSupplier supplier) {
         expandsConfigSupplier.put(transport.getId(), supplier);
+    }
+
+    public void addRoutes(Transport transport, Collection<? extends Route> routes) {
+        this.routes.computeIfAbsent(transport.getId(), id -> new ArrayList<>())
+                   .addAll(routes);
     }
 
 
@@ -301,14 +317,14 @@ public class CompositeProtocolSupport implements ProtocolSupport {
 
     /**
      * 监听客户端连接,只有部分协议支持此操作,如:
-     * <pre>
+     * <pre>{@code
      * support.doOnClientConnect(TCP,(connection,context)->{
      *  //客户端创建连接时,发送消息给客户端
      *  return connection
      *   .sendMessage(createHelloMessage())
      *    .then();
      *  })
-     * </pre>
+     * }</pre>
      *
      * @param transport 通信协议,如: {@link org.jetlinks.core.message.codec.DefaultTransport#TCP}
      * @param handler   处理器
@@ -436,6 +452,36 @@ public class CompositeProtocolSupport implements ProtocolSupport {
         onBeforeCreate.put(transport.getId(), listener);
     }
 
+
+    @SneakyThrows
+    public void setDocument(Transport transport, String documentUrlOrFile,ClassLoader loader) {
+        if (documentUrlOrFile.startsWith("http")) {
+            setDocument(transport, () -> documentUrlOrFile);
+        } else {
+            setDocument(transport, () -> new ClassPathResource(documentUrlOrFile, loader));
+        }
+    }
+
+    public void setDocument(Transport transport, Supplier<String> document) {
+
+        docFiles.put(transport.getId(), document);
+    }
+
+    public void setDocument(Transport transport, Callable<Resource> document) {
+        setDocument(transport, () -> {
+            try {
+                Resource resource = document.call();
+                if (resource.exists()) {
+                    try (InputStream input = resource.getInputStream()) {
+                        return StreamUtils.copyToString(input, StandardCharsets.UTF_8);
+                    }
+                }
+            } catch (Throwable ignore) {
+            }
+            return null;
+        });
+    }
+
     @Override
     public Mono<DeviceInfo> doBeforeDeviceCreate(Transport transport, DeviceInfo deviceInfo) {
         Function<DeviceInfo, Mono<DeviceInfo>> listener = onBeforeCreate.get(transport.getId());
@@ -453,5 +499,19 @@ public class CompositeProtocolSupport implements ProtocolSupport {
                         features.getOrDefault(transport.getId(), Flux.empty())
                 )
                 .distinct(Feature::getId);
+    }
+
+    @Override
+    public Flux<Route> getRoutes(Transport transport) {
+        return Flux.fromIterable(routes.getOrDefault(transport.getId(), Collections.emptyList()));
+    }
+
+    @Override
+    public String getDocument(Transport transport) {
+        Supplier<String> docFile = docFiles.get(transport.getId());
+        if (docFile == null) {
+            return null;
+        }
+        return docFile.get();
     }
 }

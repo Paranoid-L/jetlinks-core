@@ -17,6 +17,11 @@ public interface Headers {
     HeaderKey<Boolean> keepOnline = HeaderKey.of("keepOnline", true, Boolean.class);
 
     /**
+     * 在保持在线时,忽略连接状态信息,设备是否在线以: {@link Headers#keepOnlineTimeoutSeconds}指定为准
+     */
+    HeaderKey<Boolean> keepOnlineIgnoreConnection = HeaderKey.of("keepOnlineIC", false, Boolean.class);
+
+    /**
      * 保持在线超时时间,超过指定时间未收到消息则认为离线
      */
     HeaderKey<Integer> keepOnlineTimeoutSeconds = HeaderKey.of("keepOnlineTimeoutSeconds", 600, Integer.class);
@@ -87,6 +92,7 @@ public interface Headers {
      *
      * @see org.jetlinks.core.utils.DeviceMessageTracer
      */
+    @Deprecated
     HeaderKey<Boolean> enableTrace = HeaderKey.of("_trace", Boolean.getBoolean("device.message.trace.enabled"), Boolean.class);
 
     /**
@@ -133,4 +139,51 @@ public interface Headers {
      * @see org.jetlinks.core.message.property.ReportPropertyMessage
      */
     HeaderKey<String> geoProperty = HeaderKey.of("geoProperty", null, String.class);
+
+    /**
+     * 在设备离线时,标记是否清理所有会话.
+     * <p>
+     * 通常用于短连接方式接入平台的场景,
+     * 在集群的多台节点中存在同一个设备的会话时,默认只有集群全部会话失效时,设备才算离线.
+     * 可通过在发送离线消息中指定header: clearAllSession来标识是否让集群全部会话都失效.
+     *
+     * <pre>{@code
+     *     message.addHeader(Headers.clearAllSession,true);
+     * }</pre>
+     *
+     * @see DeviceOfflineMessage
+     */
+    HeaderKey<Boolean> clearAllSession = HeaderKey.of("clearAllSession", false, Boolean.class);
+
+//    /**
+//     * 当返回错误{@link ThingMessageReply#isSuccess()}false时,是否通过抛出异常的方式返回错误信息.默认为true.
+//     *
+//     * @see ThingMessageReply#isSuccess()
+//     * @see ThingMessageReply#getCode()
+//     * @see org.jetlinks.core.exception.DeviceOperationException
+//     * @see org.jetlinks.core.enums.ErrorCode
+//     */
+//    HeaderKey<Boolean> throwWhenReplyError = HeaderKey.of("throwWhenReplyError", false, Boolean.class);
+
+    /**
+     * 消息是否支持来自多个接入网关,某些网关会过滤掉不属于自己网关的数据,设置此header为true以忽略过滤.
+     */
+    HeaderKey<Boolean> multiGateway = HeaderKey.of("multiGateway", false, Boolean.class);
+
+    /**
+     * copy有意义的header到新到消息中,比如标记异步,超时等信息
+     *
+     * @param from from
+     * @param to   to
+     */
+    static void copyFunctionalHeader(Message from, Message to) {
+
+        from.getHeader(async).ifPresent(val -> to.addHeader(async, val));
+        from.getHeader(timeout).ifPresent(val -> to.addHeader(timeout, val));
+        from.getHeader(sendAndForget).ifPresent(val -> to.addHeader(sendAndForget, val));
+        from.getHeader(force).ifPresent(val -> to.addHeader(force, val));
+        from.getHeader(ignore).ifPresent(val -> to.addHeader(ignore, val));
+        from.getHeader(ignoreLog).ifPresent(val -> to.addHeader(ignoreLog, val));
+
+    }
 }

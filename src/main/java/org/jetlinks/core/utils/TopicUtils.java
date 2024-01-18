@@ -1,13 +1,54 @@
 package org.jetlinks.core.utils;
 
+import io.netty.util.concurrent.FastThreadLocal;
 import org.springframework.util.AntPathMatcher;
+import org.springframework.util.ConcurrentReferenceHashMap;
 import org.springframework.util.PathMatcher;
 
 import java.util.*;
 
 public class TopicUtils {
+    public static final char PATH_SPLITTER = '/';
 
     private final static PathMatcher pathMatcher = new AntPathMatcher();
+
+    private final static Map<String, String[]> splitCache;
+
+    static {
+        splitCache = new ConcurrentReferenceHashMap<>(
+            20480,
+            ConcurrentReferenceHashMap.ReferenceType.WEAK);
+    }
+
+    /**
+     * 将url转为mqtt topic,支持通配符转转换
+     * <pre>
+     *    /user/* => /user/+
+     *    /user/** => /user/#
+     *    /user/{uid}/msg => /user/+/msg
+     * </pre>
+     *
+     * @param url URL
+     * @return topic
+     */
+    public static String convertToMqttTopic(String url) {
+        String[] arr = split(url);
+        for (int i = 0; i < arr.length; i++) {
+            String str = arr[i];
+            if (str.startsWith("{") && str.endsWith("}")) {
+                if (str.charAt(1) == '#') {
+                    arr[i] = "#";
+                } else {
+                    arr[i] = "+";
+                }
+            } else if (str.equals("**")) {
+                arr[i] = "#";
+            } else if (str.equals("*")) {
+                arr[i] = "+";
+            }
+        }
+        return String.join("/", arr);
+    }
 
     /**
      * 匹配topic
@@ -29,8 +70,8 @@ public class TopicUtils {
         }
 
         if (!pattern.contains("*")
-                && !pattern.contains("#") && !pattern.contains("+")
-                && !pattern.contains("{")) {
+            && !pattern.contains("#") && !pattern.contains("+")
+            && !pattern.contains("{")) {
             return false;
         }
 
@@ -65,13 +106,87 @@ public class TopicUtils {
      * @return 分隔结果
      */
     public static String[] split(String topic) {
-        return topic.split("/");
+        return split(topic, false);
+    }
+
+    public static String[] split(String topic, boolean cache, boolean intern) {
+
+        if (!cache) {
+            return doSplit(topic);
+        }
+
+        if (intern) {
+            return splitCache.computeIfAbsent(
+                topic,
+                t -> {
+                    String[] arr = doSplit(t);
+                    for (int i = 0; i < arr.length; i++) {
+                        arr[i] = RecyclerUtils.intern(arr[i]);
+                    }
+                    return arr;
+                });
+        }
+
+        return splitCache.computeIfAbsent(topic, TopicUtils::doSplit);
+    }
+
+    private static final FastThreadLocal<List<String>> SHARE_SPLIT = new FastThreadLocal<List<String>>() {
+        @Override
+        protected List<String> initialValue() {
+            return new ArrayList<>(8);
+        }
+    };
+
+    private static final FastThreadLocal<StringBuilder> SHARE_BUILDER = new FastThreadLocal<StringBuilder>() {
+        @Override
+        protected StringBuilder initialValue() {
+            return new StringBuilder(8);
+        }
+    };
+
+    private static String[] doSplit(String topic) {
+        return split(topic, PATH_SPLITTER);
+    }
+
+    public static String[] split(String topic, char pattern) {
+        List<String> list = SHARE_SPLIT.get();
+        StringBuilder builder = SHARE_BUILDER.get();
+        try {
+            int len = topic.length();
+            int total = 0;
+
+            for (int i = 0; i < len; i++) {
+                char ch = topic.charAt(i);
+                if (ch == pattern) {
+                    list.add(builder.toString());
+                    builder.setLength(0);
+                    total++;
+                } else {
+                    builder.append(ch);
+                }
+            }
+
+            if (builder.length() > 0) {
+                list.add(builder.toString());
+                total++;
+            }
+
+            return list.toArray(new String[total]);
+        } finally {
+            builder.setLength(0);
+            list.clear();
+        }
+    }
+
+
+    public static String[] split(String topic, boolean cache) {
+        return split(topic, cache, true);
     }
 
     private static boolean matchStrings(String str, String pattern) {
         return str.equals(pattern)
-                || "*".equals(pattern)
-                || "*".equals(str);
+            || "*".equals(pattern)
+            || "*".equals(str);
     }
 
     public static boolean match(String[] pattern, String[] topicParts) {
@@ -198,7 +313,7 @@ public class TopicUtils {
      *     /device/b/*
      *     /device/v/*
      * </pre>
-     *
+     * <p>
      * before:
      * <pre>
      *     /device/{id}
@@ -212,7 +327,7 @@ public class TopicUtils {
      * @return 展开的topic集合
      */
     public static List<String> expand(String topic) {
-        if (!topic.contains(",")&&!topic.contains("{")) {
+        if (!topic.contains(",") && !topic.contains("{")) {
             return Collections.singletonList(topic);
         }
         if (topic.startsWith("/")) {

@@ -5,7 +5,6 @@ import org.jetlinks.core.config.ConfigKey;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.Supplier;
 
 /**
@@ -52,19 +51,29 @@ public interface Values {
      * @param keys key
      * @return 不存在的key
      */
-    Set<String> getNonExistentKeys(Collection<String> keys);
+    Collection<String> getNonExistentKeys(Collection<String> keys);
 
+    /**
+     * 是否为空
+     *
+     * @return true 为空，false 非空
+     */
     default boolean isEmpty() {
         return size() == 0;
     }
 
+    /**
+     * 是否不为空
+     *
+     * @return true 不为空，false 为空
+     */
     default boolean isNoEmpty() {
         return size() > 0;
     }
 
     default <T> Optional<T> getValue(ConfigKey<T> key) {
         return getValue(key.getKey())
-                .map(val -> (val.as(key.getType())));
+                .map(val -> (val.as(key.getValueType())));
     }
 
     default String getString(String key, Supplier<String> defaultValue) {

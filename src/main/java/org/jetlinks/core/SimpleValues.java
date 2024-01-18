@@ -1,13 +1,14 @@
 package org.jetlinks.core;
 
+import com.google.common.collect.Collections2;
 import lombok.AllArgsConstructor;
 import lombok.NonNull;
-import org.apache.commons.collections.MapUtils;
-import org.hswebframework.web.bean.FastBeanCopier;
+import org.jetlinks.core.utils.CompositeMap;
+import org.jetlinks.core.utils.ConverterUtils;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 @AllArgsConstructor(staticName = "of")
 class SimpleValues implements Values {
@@ -17,23 +18,28 @@ class SimpleValues implements Values {
 
     @Override
     public Map<String, Object> getAllValues() {
-        return new HashMap<>(values);
+        return values instanceof CompositeMap ? values : Collections.unmodifiableMap(values);
     }
 
     @Override
     public Optional<Value> getValue(String key) {
-        return Optional
-                .ofNullable(key)
-                .map(values::get)
-                .map(Value::simple);
+        if (key == null) {
+            return Optional.empty();
+        }
+        Object value = values.get(key);
+        if (null == value) {
+            return Optional.empty();
+        }
+        return Optional.of(Value.simple(value));
     }
 
     @Override
     public Values merge(Values source) {
-        Map<String, Object> merged = new HashMap<>();
-        merged.putAll(this.values);
-        merged.putAll(source.getAllValues());
-        return Values.of(merged);
+        Map<String, Object> sourceValues = source instanceof SimpleValues ? ((SimpleValues) source).values : source.getAllValues();
+
+        Map<String, Object> values = new CompositeMap<>(sourceValues, this.values);
+
+        return Values.of(values);
     }
 
     @Override
@@ -42,18 +48,22 @@ class SimpleValues implements Values {
     }
 
     @Override
-    public Set<String> getNonExistentKeys(Collection<String> keys) {
-        return keys
-                .stream()
-                .filter(has -> !values.containsKey(has))
-                .collect(Collectors.toSet());
+    public boolean isEmpty() {
+        return values.isEmpty();
+    }
+
+    @Override
+    public boolean isNoEmpty() {
+        return !values.isEmpty();
+    }
+
+    @Override
+    public Collection<String> getNonExistentKeys(Collection<String> keys) {
+        return Collections2.filter(keys, key -> !values.containsKey(key));
     }
 
     @Override
     public String getString(String key, Supplier<String> defaultValue) {
-        if (MapUtils.isEmpty(values)) {
-            return defaultValue.get();
-        }
         Object val = values.get(key);
         if (val == null) {
             return defaultValue.get();
@@ -63,18 +73,16 @@ class SimpleValues implements Values {
 
     @Override
     public Number getNumber(String key, Supplier<Number> defaultValue) {
-        if (MapUtils.isEmpty(values)) {
-            return defaultValue.get();
-        }
         Object val = values.get(key);
         if (val == null) {
             return defaultValue.get();
         }
-        if(val instanceof Number){
+        if (val instanceof Number) {
             return ((Number) val);
         }
-        return FastBeanCopier.DEFAULT_CONVERT.convert(
-                val, Number.class, FastBeanCopier.EMPTY_CLASS_ARRAY
-        );
+        if (val instanceof Date) {
+            return ((Date) val).getTime();
+        }
+        return ConverterUtils.convert(val, BigDecimal.class);
     }
 }

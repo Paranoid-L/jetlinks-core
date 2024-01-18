@@ -25,12 +25,15 @@ import java.util.function.Function;
 public interface Payload extends ReferenceCounted {
 
     @Nonnull
+    @Deprecated
     ByteBuf getBody();
 
+    @Deprecated
     default Payload slice() {
         return Payload.of(getBody().slice());
     }
 
+    @Deprecated
     default <T> T decode(Decoder<T> decoder, boolean release) {
         try {
             return decoder.decode(this);
@@ -41,6 +44,7 @@ public interface Payload extends ReferenceCounted {
         }
     }
 
+    @Deprecated
     default <T> T decode(Decoder<T> decoder) {
         return decode(decoder, true);
     }
@@ -49,6 +53,7 @@ public interface Payload extends ReferenceCounted {
         return decode(decoder, true);
     }
 
+    @Deprecated
     default <T> T decode(Class<T> decoder, boolean release) {
         return decode(Codecs.lookup(decoder), release);
     }
@@ -74,10 +79,12 @@ public interface Payload extends ReferenceCounted {
         return decode(true);
     }
 
+    @Deprecated
     default <T> T convert(Function<ByteBuf, T> mapper) {
         return convert(mapper, true);
     }
 
+    @Deprecated
     default <T> T convert(Function<ByteBuf, T> mapper, boolean release) {
         ByteBuf body = getBody();
         try {
@@ -89,15 +96,18 @@ public interface Payload extends ReferenceCounted {
         }
     }
 
+    @Deprecated
     default Payload retain() {
         return retain(1);
     }
 
+    @Deprecated
     default Payload retain(int inc) {
         getBody().retain(inc);
         return this;
     }
 
+    @Deprecated
     default boolean release(int dec) {
         if (refCnt() >= dec) {
             return ReferenceCountUtil.release(getBody(), dec);
@@ -105,18 +115,22 @@ public interface Payload extends ReferenceCounted {
         return true;
     }
 
+    @Deprecated
     default boolean release() {
         return release(1);
     }
 
+    @Deprecated
     default byte[] getBytes() {
         return getBytes(true);
     }
 
+    @Deprecated
     default byte[] getBytes(boolean release) {
         return convert(ByteBufUtil::getBytes, release);
     }
 
+    @Deprecated
     default byte[] getBytes(int offset, int length, boolean release) {
         return convert(byteBuf -> ByteBufUtil.getBytes(byteBuf, offset, length), release);
     }
@@ -135,6 +149,7 @@ public interface Payload extends ReferenceCounted {
         }
     }
 
+    @Deprecated
     default JSONObject bodyToJson(boolean release) {
         return decode(JSONObject.class,release);
     }
@@ -151,17 +166,20 @@ public interface Payload extends ReferenceCounted {
         return decode(JSONArray.class);
     }
 
+    @Deprecated
     @Override
     default int refCnt() {
         return getBody().refCnt();
     }
 
+    @Deprecated
     @Override
     default Payload touch() {
         getBody().touch();
         return this;
     }
 
+    @Deprecated
     @Override
     default Payload touch(Object o) {
         getBody().touch(o);

@@ -1,10 +1,15 @@
 package org.jetlinks.core.message;
 
 import com.alibaba.fastjson.JSONObject;
+import com.google.common.collect.Maps;
 import lombok.Getter;
 import lombok.Setter;
 import org.jetlinks.core.enums.ErrorCode;
+import org.jetlinks.core.utils.SerializeUtils;
 
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
 import java.util.function.BiConsumer;
 
 /**
@@ -62,5 +67,31 @@ public class ChildDeviceMessageReply extends CommonDeviceMessageReply<ChildDevic
             json.put("childDeviceMessage", childDeviceMessage.toJson());
         }
         return json;
+    }
+
+    @Override
+    public void fromJson(JSONObject jsonObject) {
+        super.fromJson(new JSONObject(Maps.filterKeys(jsonObject, k -> !"childDeviceMessage".equals(k))));
+
+        JSONObject json = jsonObject.getJSONObject("childDeviceMessage");
+        if (json != null) {
+            childDeviceMessage = MessageType
+                    .convertMessage(json)
+                    .orElse(null);
+        }
+    }
+
+    @Override
+    public void writeExternal(ObjectOutput out) throws IOException {
+        super.writeExternal(out);
+        SerializeUtils.writeNullableUTF(childDeviceId, out);
+        out.writeObject(childDeviceMessage);
+    }
+
+    @Override
+    public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
+        super.readExternal(in);
+        this.childDeviceId = SerializeUtils.readNullableUTF(in);
+        this.childDeviceMessage = (Message) in.readObject();
     }
 }

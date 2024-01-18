@@ -39,6 +39,10 @@ public interface ClusterQueue<T> {
      */
     Mono<Boolean> add(Publisher<T> publisher);
 
+   default Mono<Boolean> add(T data){
+       return add(Mono.just(data));
+   }
+
     /**
      * 向队列中批量添加数据
      *
@@ -58,6 +62,11 @@ public interface ClusterQueue<T> {
      * 停止队列,停止后不再消费队列数据.
      */
     void stop();
+
+    /**
+     * @return 是否不再消费数据
+     */
+    boolean hasLocalConsumer();
 
     /**
      * 获取队列中消息数量

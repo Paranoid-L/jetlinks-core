@@ -1,12 +1,15 @@
 package org.jetlinks.core.server.session;
 
+import io.netty.util.ReferenceCountUtil;
 import lombok.AccessLevel;
+import lombok.Getter;
 import lombok.Setter;
 import org.jetlinks.core.device.DeviceOperator;
 import org.jetlinks.core.enums.ErrorCode;
 import org.jetlinks.core.exception.DeviceOperationException;
 import org.jetlinks.core.message.codec.EncodedMessage;
 import org.jetlinks.core.message.codec.Transport;
+import org.jetlinks.core.utils.Reactors;
 import reactor.core.publisher.Mono;
 
 import javax.annotation.Nullable;
@@ -22,6 +25,11 @@ public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSessio
     private long lastKeepAliveTime = System.currentTimeMillis();
 
     private final long connectTime = System.currentTimeMillis();
+
+    //忽略上级会话信息,设置为true后. 设备是否离线以超时时间为准
+    @Setter
+    @Getter
+    private boolean ignoreParent = false;
 
     private long keepAliveTimeOutMs;
 
@@ -56,6 +64,10 @@ public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSessio
         return connectTime;
     }
 
+    public DeviceSession getParent() {
+        return parent;
+    }
+
     @Override
     public Mono<Boolean> send(EncodedMessage encodedMessage) {
         return Mono
@@ -63,7 +75,9 @@ public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSessio
                     if (parent.isAlive()) {
                         return parent.send(encodedMessage);
                     }
-                    return Mono.error(new DeviceOperationException(ErrorCode.CONNECTION_LOST));
+                    return Mono
+                            .<Boolean>error(new DeviceOperationException(ErrorCode.CONNECTION_LOST))
+                            .doAfterTerminate(() -> ReferenceCountUtil.safeRelease(encodedMessage.getPayload()));
                 });
     }
 
@@ -74,7 +88,9 @@ public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSessio
 
     @Override
     public void close() {
-        parent.close();
+        if (!ignoreParent) {
+            parent.close();
+        }
     }
 
     @Override
@@ -85,9 +101,18 @@ public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSessio
 
     @Override
     public boolean isAlive() {
+        if (aliveByKeepAlive()) {
+            return true;
+        }
+        if (ignoreParent) {
+            return false;
+        }
+        return parent.isAlive();
+    }
+
+    private boolean aliveByKeepAlive() {
         return keepAliveTimeOutMs <= 0
-                || System.currentTimeMillis() - lastKeepAliveTime < keepAliveTimeOutMs
-                || parent.isAlive();
+                || System.currentTimeMillis() - lastKeepAliveTime < keepAliveTimeOutMs;
     }
 
     @Override
@@ -118,12 +143,12 @@ public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSessio
 
     @Override
     public boolean isWrapFrom(Class<?> type) {
-        return type == KeepOnlineSession.class || parent.isWrapFrom(type);
+        return type.isInstance(this) || parent.isWrapFrom(type);
     }
 
     @Override
     public <T extends DeviceSession> T unwrap(Class<T> type) {
-        return type == KeepOnlineSession.class ? type.cast(this) : parent.unwrap(type);
+        return type.isInstance(this) ? type.cast(this) : parent.unwrap(type);
     }
 
     @Override
@@ -136,4 +161,27 @@ public class KeepOnlineSession implements DeviceSession, ReplaceableDeviceSessio
         return KeepOnlineDeviceSessionProvider.ID;
     }
 
+    @Override
+    public Mono<Boolean> isAliveAsync() {
+        //心跳正常
+        if (aliveByKeepAlive()) {
+            return Reactors.ALWAYS_TRUE;
+        }
+        //忽略上级
+        if (ignoreParent) {
+            return Reactors.ALWAYS_FALSE;
+        }
+        //判断上级
+        return parent.isAliveAsync();
+    }
+
+    @Override
+    public boolean isChanged(DeviceSession another) {
+        return parent.isChanged(another);
+    }
+
+    @Override
+    public String toString() {
+        return "keepOnline[" + keepAliveTimeOutMs + "ms]:" + parent;
+    }
 }

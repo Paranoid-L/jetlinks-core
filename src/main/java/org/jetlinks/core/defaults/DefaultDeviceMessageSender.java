@@ -9,8 +9,8 @@ import org.jetlinks.core.enums.ErrorCode;
 import org.jetlinks.core.exception.DeviceOperationException;
 import org.jetlinks.core.message.*;
 import org.jetlinks.core.message.interceptor.DeviceMessageSenderInterceptor;
-import org.jetlinks.core.utils.DeviceMessageTracer;
 import org.reactivestreams.Publisher;
+import org.springframework.util.ObjectUtils;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -18,7 +18,6 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
@@ -28,10 +27,13 @@ import static org.jetlinks.core.device.DeviceConfigKey.connectionServerId;
 @Slf4j
 public class DefaultDeviceMessageSender implements DeviceMessageSender {
 
+    //设备操作代理,用于管理集群间设备指令发送
     private final DeviceOperationBroker handler;
 
+    //设备操作接口,用于发送指令到设备,以及获取配置等相关信息
     private final DeviceOperator operator;
 
+    //设备注册中心,用于统一管理设备以及产品的基本信息,缓存,进行设备指令下发等操作
     private final DeviceRegistry registry;
 
     private static final long DEFAULT_TIMEOUT = TimeUnit.SECONDS.toMillis(Integer.getInteger("jetlinks.device.message.default-timeout", 10));
@@ -52,6 +54,25 @@ public class DefaultDeviceMessageSender implements DeviceMessageSender {
         this.globalInterceptor = interceptor;
     }
 
+    /**
+     * 发送一个支持回复的消息.
+     * <p>
+     * ⚠️: 请勿自己实现消息对象,而应该使用框架定义的3种消息.
+     * ⚠️: 如果是异步消息,将直接返回<code>{"success":true,"code":"REQUEST_HANDLING"}</code>
+     *
+     * @param message 具体的消息对象
+     * @param <R>     返回类型
+     * @return 异步发送结果
+     * @see org.jetlinks.core.message.property.ReadPropertyMessage
+     * @see org.jetlinks.core.message.property.ReadPropertyMessageReply
+     * @see org.jetlinks.core.message.property.WritePropertyMessage
+     * @see org.jetlinks.core.message.property.WritePropertyMessageReply
+     * @see org.jetlinks.core.message.function.FunctionInvokeMessage
+     * @see org.jetlinks.core.message.function.FunctionInvokeMessageReply
+     * @see org.jetlinks.core.enums.ErrorCode#CLIENT_OFFLINE
+     * @see org.jetlinks.core.enums.ErrorCode#REQUEST_HANDLING
+     * @see org.jetlinks.core.message.interceptor.DeviceMessageSenderInterceptor
+     */
     @Override
     public <R extends DeviceMessageReply> Flux<R> send(Publisher<RepayableDeviceMessage<R>> message) {
         return send(message, this::convertReply);
@@ -134,6 +155,14 @@ public class DefaultDeviceMessageSender implements DeviceMessageSender {
         return flux;
     }
 
+    /**
+     * 发送消息并获取返回
+     *
+     * @param message 消息
+     * @param <R>     回复类型
+     * @return 异步发送结果
+     * @see DeviceMessageSender#send(Publisher)
+     */
     @Override
     public <R extends DeviceMessage> Flux<R> send(DeviceMessage message) {
         return send(Mono.just(message), this::convertReply);
@@ -146,6 +175,21 @@ public class DefaultDeviceMessageSender implements DeviceMessageSender {
                         .then(operator.getConnectionServerId()));
     }
 
+    private ChildDeviceMessage createChildDeviceMessage(String parentId, DeviceMessage message) {
+        ChildDeviceMessage children = new ChildDeviceMessage();
+        children.setDeviceId(parentId);
+        children.setMessageId(message.getMessageId());
+        children.setTimestamp(message.getTimestamp());
+        children.setChildDeviceId(operator.getDeviceId());
+        children.setChildDeviceMessage(message);
+
+        // https://github.com/jetlinks/jetlinks-pro/issues/19
+        Headers.copyFunctionalHeader(message, children);
+        message.addHeader(Headers.dispatchToParent, true);
+        children.validate();
+        return children;
+    }
+
     private Flux<DeviceMessage> sendToParentDevice(String parentId,
                                                    DeviceMessage message) {
         if (parentId.equals(operator.getDeviceId())) {
@@ -155,19 +199,7 @@ public class DefaultDeviceMessageSender implements DeviceMessageSender {
                     );
         }
 
-        ChildDeviceMessage children = new ChildDeviceMessage();
-        children.setDeviceId(parentId);
-        children.setMessageId(message.getMessageId());
-        children.setTimestamp(message.getTimestamp());
-        children.setChildDeviceId(operator.getDeviceId());
-        children.setChildDeviceMessage(message);
-
-        // https://github.com/jetlinks/jetlinks-pro/issues/19
-        if (null != message.getHeaders()) {
-            children.setHeaders(new ConcurrentHashMap<>(message.getHeaders()));
-        }
-        message.addHeader(Headers.dispatchToParent, true);
-        children.validate();
+        ChildDeviceMessage children = createChildDeviceMessage(parentId, message);
         return registry
                 .getDevice(parentId)
                 .switchIfEmpty(Mono.error(() -> new DeviceOperationException(ErrorCode.UNKNOWN_PARENT_DEVICE)))
@@ -177,7 +209,17 @@ public class DefaultDeviceMessageSender implements DeviceMessageSender {
                 ;
     }
 
+    /**
+     * 发送消息并自定义返回结果转换器
+     *
+     * @param message      消息
+     * @param replyMapping 消息回复转换器
+     * @param <R>          回复类型
+     * @return 异步发送结果
+     * @see DeviceMessageSender#send(Publisher)
+     */
     public <R extends DeviceMessage> Flux<R> send(Publisher<? extends DeviceMessage> message, Function<Object, R> replyMapping) {
+        // FIXME: 2023/6/29 重构...
         return Mono
                 .zip(
                         //当前设备连接的服务器ID
@@ -198,8 +240,8 @@ public class DefaultDeviceMessageSender implements DeviceMessageSender {
                             .andThen(globalInterceptor);
                     String server = serverAndInterceptor.getT1();
                     String parentGatewayId = serverAndInterceptor.getT3();
-                    //设备未连接,有上级网关设备则通过父级设备发送消息
-                    if (StringUtils.isEmpty(server) && StringUtils.hasText(parentGatewayId)) {
+                    //有上级网关设备则通过父级设备发送消息
+                    if (!StringUtils.hasText(server) && StringUtils.hasText(parentGatewayId)) {
                         return Flux
                                 .from(message)
                                 .flatMap(msg -> interceptor.preSend(operator, msg))
@@ -214,8 +256,8 @@ public class DefaultDeviceMessageSender implements DeviceMessageSender {
                             .flatMap(msg -> interceptor.preSend(operator, msg))
                             .concatMap(msg -> Flux
                                     .defer(() -> {
-                                        DeviceMessageTracer.trace(msg, "send.before");
-                                        if (StringUtils.isEmpty(server)) {
+                                        //缓存中没有serverId,说明当前设备并未连接到平台.
+                                        if (ObjectUtils.isEmpty(server)) {
                                             return interceptor.afterSent(operator, msg, Flux.error(new DeviceOperationException(ErrorCode.CLIENT_OFFLINE)));
                                         }
                                         boolean forget = msg.getHeader(Headers.sendAndForget).orElse(false);
@@ -223,10 +265,8 @@ public class DefaultDeviceMessageSender implements DeviceMessageSender {
                                         Flux<R> replyStream = forget
                                                 ? Flux.empty()
                                                 : handler
-                                                .handleReply(msg.getDeviceId(),
-                                                             msg.getMessageId(),
-                                                             Duration.ofMillis(msg.getHeader(Headers.timeout)
-                                                                                  .orElse(defaultTimeout)))
+                                                //监听来自其他服务的回复
+                                                .handleReply(msg.getDeviceId(), msg.getMessageId(), Duration.ZERO)
                                                 .map(replyMapping)
                                                 .onErrorResume(DeviceOperationException.class, error -> {
                                                     if (error.getCode() == ErrorCode.CLIENT_OFFLINE) {
@@ -237,7 +277,6 @@ public class DefaultDeviceMessageSender implements DeviceMessageSender {
                                                     }
                                                     return Mono.error(error);
                                                 })
-                                                .onErrorMap(TimeoutException.class, timeout -> new DeviceOperationException(ErrorCode.TIME_OUT, timeout))
                                                 .as(flux -> this.logReply(msg, flux));
 
                                         //发送消息到设备连接的服务器
@@ -281,28 +320,55 @@ public class DefaultDeviceMessageSender implements DeviceMessageSender {
                                                     }
                                                     log.debug("send device[{}] message complete", operator.getDeviceId());
                                                     return interceptor.afterSent(operator, msg, replyStream);
-                                                })
-                                                .doOnNext(r -> DeviceMessageTracer.trace(r, "send.reply"))
-                                                ;
+                                                });
                                     })
-                                    .as(flux -> interceptor
-                                            .doSend(operator, msg, flux.cast(DeviceMessage.class))
-                                            .map(_resp -> (R) _resp)));
+                                    .timeout(Duration.ofMillis(msg.getHeader(Headers.timeout).orElse(defaultTimeout)),
+                                             Mono.error(() -> new DeviceOperationException(ErrorCode.TIME_OUT)))
+                                    .onErrorMap(TimeoutException.class, timeout -> new DeviceOperationException(ErrorCode.TIME_OUT, timeout))
+                                    .as(flux -> interceptor.doSend(operator, msg, flux.cast(DeviceMessage.class)).map(_resp -> (R) _resp))
+
+                            );
                 });
 
     }
 
+    /**
+     * 发送{@link org.jetlinks.core.message.function.FunctionInvokeMessage}消息更便捷的API
+     *
+     * @param function 要执行的功能
+     * @return FunctionInvokeMessageSender
+     * @see DeviceMessageSender#send(Publisher)
+     * @see org.jetlinks.core.message.function.FunctionInvokeMessage
+     * @see FunctionInvokeMessageSender
+     */
     @Override
     public FunctionInvokeMessageSender invokeFunction(String function) {
         return new DefaultFunctionInvokeMessageSender(operator, function);
     }
 
+    /**
+     * 发送{@link org.jetlinks.core.message.property.ReadPropertyMessage}消息更便捷的API
+     *
+     * @param property 要获取的属性列表
+     * @return ReadPropertyMessageSender
+     * @see DeviceMessageSender#send(Publisher)
+     * @see org.jetlinks.core.message.property.ReadPropertyMessage
+     * @see ReadPropertyMessageSender
+     */
     @Override
     public ReadPropertyMessageSender readProperty(String... property) {
         return new DefaultReadPropertyMessageSender(operator)
                 .read(property);
     }
 
+    /**
+     * 发送{@link org.jetlinks.core.message.property.WritePropertyMessage}消息更便捷的API
+     *
+     * @return WritePropertyMessageSender
+     * @see DeviceMessageSender#send(Publisher)
+     * @see org.jetlinks.core.message.property.WritePropertyMessage
+     * @see WritePropertyMessageSender
+     */
     @Override
     public WritePropertyMessageSender writeProperty() {
         return new DefaultWritePropertyMessageSender(operator);

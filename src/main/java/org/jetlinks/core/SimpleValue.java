@@ -1,10 +1,13 @@
 package org.jetlinks.core;
 
 import lombok.AllArgsConstructor;
-import org.hswebframework.web.bean.FastBeanCopier;
+import lombok.EqualsAndHashCode;
+
+import java.io.Serializable;
 
 @AllArgsConstructor(staticName = "of")
-class SimpleValue implements Value {
+@EqualsAndHashCode
+class SimpleValue implements Value, Serializable {
 
     private final Object nativeValue;
 
@@ -13,16 +16,4 @@ class SimpleValue implements Value {
         return nativeValue;
     }
 
-    @Override
-    public <T> T as(Class<T> type) {
-        if (nativeValue == null) {
-            return null;
-        }
-        if(type.isInstance(nativeValue)){
-            return (T)nativeValue;
-        }
-        return FastBeanCopier.DEFAULT_CONVERT.convert(
-                nativeValue, type, FastBeanCopier.EMPTY_CLASS_ARRAY
-        );
-    }
 }
